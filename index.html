@@ -1,0 +1,1363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Bending vs. Torsion — Interactive Beam Visualizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  :root {
+    --bg: #0A0E14; --raised: #10151F; --line: #1C2430;
+    --ink: #E8ECF2; --ink-muted: #7C8798; --ink-faint: #4A5568;
+    --bend: #4FA8FF; --torsion: #FF8A3D; --combined: #B084FF;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overscroll-behavior: none; background: var(--bg); }
+  body { font-family: 'Space Grotesk', system-ui, sans-serif; color: var(--ink); overflow: hidden; }
+  #canvas-wrap { position: fixed; inset: 0; touch-action: none; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  .hud { position: fixed; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 0px)); padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  @media (min-width: 640px) { .hud { padding: 24px; } }
+
+  .top-bar h1 { font-size: 19px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  .top-bar h1 .dim { color: var(--ink-faint); font-weight: 500; }
+  .top-bar p { font-size: 13px; color: var(--ink-muted); margin: 4px 0 0; max-width: 360px; line-height: 1.45; }
+  .accent-b { color: var(--bend); } .accent-t { color: var(--torsion); } .accent-c { color: var(--combined); }
+
+  .glass { background: rgba(16,21,31,0.6); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid var(--line); border-radius: 8px; }
+
+  .readout { display: none; pointer-events: none; max-width: 250px; padding: 14px 16px; }
+  @media (min-width: 640px) { .readout { display: block; } }
+  .readout .label { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.03em; color: var(--ink-muted); margin: 0 0 6px; }
+  .readout .eq { font-family: 'JetBrains Mono', monospace; font-size: 14px; margin: 0; }
+  .readout .value-row { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; }
+  .readout .value { font-family: 'JetBrains Mono', monospace; font-size: 22px; }
+  .readout .unit { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--ink-muted); }
+  .readout .sub { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-faint); margin: 3px 0 0; }
+  .readout .block + .block { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+
+  .gizmo-legend { position: fixed; top: calc(16px + env(safe-area-inset-top, 0px)); right: 16px; display: flex; gap: 10px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-muted); pointer-events: none; }
+  @media (min-width: 640px) { .gizmo-legend { top: calc(140px + env(safe-area-inset-top, 0px)); right: 24px; } }
+  .gizmo-legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .dot { width: 8px; height: 8px; border-radius: 1px; display: inline-block; transform: rotate(45deg); }
+
+  .ghost-btn {
+    pointer-events: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-muted);
+    background: rgba(16,21,31,0.6); border: 1px solid var(--line); border-radius: 5px; padding: 7px 11px;
+    cursor: pointer; backdrop-filter: blur(12px); transition: color .15s, border-color .15s;
+  }
+  .ghost-btn:hover { color: var(--ink); border-color: #2C3A4E; }
+  .analysis-toggle-wrap { position: fixed; top: calc(16px + env(safe-area-inset-top, 0px)); right: 16px; pointer-events: none; display: flex; justify-content: flex-end; }
+  @media (min-width: 640px) { .analysis-toggle-wrap { top: calc(80px + env(safe-area-inset-top, 0px)); right: 24px; } }
+
+  .analysis-panel {
+    position: fixed; top: 0; right: 0; height: 100%; width: min(340px, 92vw);
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    transform: translateX(105%); transition: transform .25s ease; z-index: 5;
+    pointer-events: auto; overflow-y: auto; border-radius: 0; border-left: 1px solid var(--line); border-top:none; border-bottom:none; border-right:none;
+  }
+  .analysis-panel.open { transform: translateX(0); }
+  .analysis-panel h2 { font-size: 13px; font-weight: 600; margin: 0 0 10px; display:flex; align-items:center; justify-content:space-between; }
+  .analysis-panel .close-btn { pointer-events:auto; background:none; border:none; color:var(--ink-muted); font-size:16px; cursor:pointer; line-height:1; padding:2px 6px; }
+  .analysis-section { margin-bottom: 22px; }
+  .analysis-section .hint-text { font-size: 12px; color: var(--ink-faint); line-height:1.5; }
+  .stat-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin-top:10px; }
+  .stat-grid .k { font-size:11px; color:var(--ink-muted); }
+  .stat-grid .v { font-family:'JetBrains Mono', monospace; font-size:13px; text-align:right; }
+
+  .hint { position: fixed; bottom: calc(212px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-faint); pointer-events: none; white-space: nowrap; text-align:center; }
+  @media (min-width: 640px) { .hint { bottom: calc(232px + env(safe-area-inset-bottom, 0px)); } }
+
+  .dock { pointer-events: auto; width: 100%; max-width: 960px; margin: 0 auto; padding: 14px 16px; box-shadow: 0 8px 40px rgba(0,0,0,0.45); }
+  @media (min-width: 640px) { .dock { padding: 18px 24px; } }
+  .dock-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .dock-row:last-of-type { margin-bottom: 0; }
+  .field-label { font-size: 10px; color: var(--ink-faint); text-transform: none; margin-right: 2px; }
+
+  .seg { display: inline-flex; border: 1px solid var(--line); background: rgba(0,0,0,0.3); border-radius: 4px; padding: 2px; }
+  .seg button { appearance: none; border: none; background: transparent; color: var(--ink-muted); font-family: inherit; font-size: 12.5px; font-weight: 500; padding: 6px 10px; border-radius: 2px; cursor: pointer; transition: background-color .15s, color .15s; white-space:nowrap; }
+  .seg button:hover { color: var(--ink); }
+  .seg button.active { color: var(--bg); }
+
+  .switch-label { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-size: 12px; color: var(--ink-muted); }
+  .switch { position: relative; width: 36px; height: 20px; border-radius: 999px; background: var(--line); transition: background-color .15s; flex-shrink: 0; }
+  .switch .knob { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--ink); transition: transform .15s; }
+
+  .sliders { display: flex; flex-wrap: wrap; gap: 18px; }
+  @media (min-width: 640px) { .sliders { gap: 28px; } }
+  .slider-field { flex: 1; min-width: 130px; }
+  .slider-field .row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .slider-field .row span:first-child { font-size: 12px; color: var(--ink-muted); }
+  .slider-field .row span:last-child { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  input[type='range'] { -webkit-appearance: none; appearance: none; width: 100%; height: 2px; background: var(--line); outline: none; }
+  input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 2px; background: var(--accent, var(--bend)); border: 2px solid var(--bg); cursor: pointer; transform: rotate(45deg); transition: transform .15s; }
+  input[type='range']::-webkit-slider-thumb:hover { transform: rotate(45deg) scale(1.15); }
+  input[type='range']::-moz-range-thumb { width: 14px; height: 14px; border-radius: 2px; background: var(--accent, var(--bend)); border: 2px solid var(--bg); cursor: pointer; }
+
+  #fbdWrap svg text { font-family: 'JetBrains Mono', monospace; }
+  #mohrWrap svg text { font-family: 'JetBrains Mono', monospace; }
+
+  :focus-visible { outline: 2px solid var(--bend); outline-offset: 2px; }
+</style>
+</head>
+<body>
+  <div id="canvas-wrap"></div>
+
+  <div class="hud">
+    <div class="top-bar">
+      <h1>Bending <span class="dim">vs.</span> Torsion</h1>
+      <p id="modeExplain"></p>
+    </div>
+    <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px;">
+      <div class="readout glass" id="readoutPanel"></div>
+      <div style="flex:1"></div>
+    </div>
+  </div>
+
+  <div class="gizmo-legend">
+    <span><i class="dot" style="background:#FF6B6B"></i>X</span>
+    <span><i class="dot" style="background:#4FA8FF"></i>Y</span>
+    <span><i class="dot" style="background:#FFD24F"></i>Z</span>
+  </div>
+
+  <div class="analysis-toggle-wrap"><button class="ghost-btn" id="analysisToggle">Analysis ▸</button></div>
+
+  <div class="analysis-panel glass" id="analysisPanel">
+    <h2>Analysis <button class="close-btn" id="analysisClose">✕</button></h2>
+    <div class="analysis-section">
+      <p class="field-label" style="margin-bottom:8px;">FREE-BODY DIAGRAM</p>
+      <div id="fbdWrap"></div>
+    </div>
+    <div class="analysis-section">
+      <p class="field-label" style="margin-bottom:4px;">STRESS ALONG THE LENGTH</p>
+      <p class="hint-text" style="margin:0 0 8px;">Extreme-fiber stress magnitude at every section, x = 0 to L. Drag to move the probe.</p>
+      <div id="lengthChartWrap"></div>
+      <input type="range" id="xSlider" min="0" max="100" step="0.5" value="0" style="margin-top:6px;" />
+    </div>
+    <div class="analysis-section">
+      <p class="field-label" style="margin-bottom:4px;">CROSS-SECTION AT x = <span id="xLabel">0.00</span></p>
+      <p class="hint-text" style="margin:0 0 8px;">Click anywhere on the section to inspect that exact point below.</p>
+      <canvas id="crossSectionCanvas" width="220" height="220" style="width:100%; max-width:220px; display:block; margin:0 auto; cursor:crosshair; border-radius:6px; background:rgba(255,255,255,0.03); border:1px solid var(--line);"></canvas>
+    </div>
+    <div class="analysis-section">
+      <p class="field-label" style="margin-bottom:8px;">STRESS AT PICKED POINT</p>
+      <div id="mohrWrap"><p class="hint-text">Click a point on the beam (3D) or on the cross-section above to see its local stress state and Mohr's circle.</p></div>
+    </div>
+  </div>
+
+  <p class="hint">drag to orbit · scroll / pinch to zoom · click beam to inspect stress</p>
+
+  <div class="hud" style="justify-content:flex-end;">
+    <div class="dock glass">
+      <div class="dock-row">
+        <span class="field-label">Loading</span>
+        <div class="seg" id="modeSeg">
+          <button data-value="bending" class="active">Bending</button>
+          <button data-value="torsion">Torsion</button>
+          <button data-value="combined">Combined</button>
+        </div>
+        <div class="seg" id="supportSeg">
+          <button data-value="cantilever" class="active">Cantilever</button>
+          <button data-value="simply-supported">Simply supported</button>
+        </div>
+        <div class="seg" id="loadTypeSeg">
+          <button data-value="point" class="active">Point load</button>
+          <button data-value="udl">UDL</button>
+        </div>
+      </div>
+      <div class="dock-row">
+        <span class="field-label">Section</span>
+        <div class="seg" id="sectionSeg">
+          <button data-value="rect" class="active">Rectangular</button>
+          <button data-value="circle">Circular</button>
+          <button data-value="ibeam">I-beam</button>
+        </div>
+        <div style="margin-left:auto; display:flex; align-items:center; gap:12px;">
+          <div id="heatLegend" style="display:flex; align-items:center; gap:6px;">
+            <span style="font-size:10px; color:var(--ink-faint); font-family:'JetBrains Mono',monospace;">low</span>
+            <span style="width:56px; height:8px; border-radius:2px; background:linear-gradient(90deg,#2E6BFF,#FFD24F,#FF3B30); display:inline-block;"></span>
+            <span style="font-size:10px; color:var(--ink-faint); font-family:'JetBrains Mono',monospace;">high</span>
+          </div>
+          <label class="switch-label" id="heatmapLabel">
+            <span>Stress heatmap</span>
+            <span class="switch" id="heatmapSwitch"><span class="knob"></span></span>
+          </label>
+        </div>
+      </div>
+      <div class="dock-row" style="margin-bottom:0;">
+        <div class="sliders">
+          <div class="slider-field" id="pField">
+            <div class="row"><span id="pLabel">Load, P</span><span id="pValue">45</span></div>
+            <input type="range" id="pSlider" min="0" max="100" step="1" value="45" />
+          </div>
+          <div class="slider-field" id="tField">
+            <div class="row"><span>Torque, T</span><span id="tValue">45</span></div>
+            <input type="range" id="tSlider" min="0" max="100" step="1" value="45" />
+          </div>
+          <div class="slider-field">
+            <div class="row"><span>Deform scale</span><span id="scaleValue">35×</span></div>
+            <input type="range" id="scaleSlider" min="1" max="100" step="1" value="35" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// =========================================================================
+// PHYSICS
+// =========================================================================
+const BEAM = { L: 6, EI_REF: 189000, GJ_REF: 27000 };
+
+// ---- Cross-sections -----------------------------------------------------
+const SECTION_DIMS = {
+  rect:   { H: 0.9, D: 0.9 },
+  circle: { R: 0.5 },
+  ibeam:  { d: 1.0, bf: 0.7, tf: 0.09, tw: 0.07 }
+};
+
+function getSectionProps(section) {
+  if (section === 'rect') {
+    const { H, D } = SECTION_DIMS.rect;
+    const I = (D * H ** 3) / 12;
+    const a = Math.max(H, D) / 2, b = Math.min(H, D) / 2;
+    const J = a * b ** 3 * (16 / 3 - 3.36 * (b / a) * (1 - b ** 4 / (12 * a ** 4)));
+    return { type: 'rect', I, J, H, D, yMax: H / 2, rMax: Math.sqrt((H / 2) ** 2 + (D / 2) ** 2) };
+  }
+  if (section === 'circle') {
+    const { R } = SECTION_DIMS.circle;
+    const I = (Math.PI * (2 * R) ** 4) / 64;
+    const J = (Math.PI * (2 * R) ** 4) / 32; // closed section — full St. Venant polar constant
+    return { type: 'circle', I, J, R, yMax: R, rMax: R };
+  }
+  // ibeam — open thin-walled section
+  const { d, bf, tf, tw } = SECTION_DIMS.ibeam;
+  const hw = d - 2 * tf;
+  const I = (bf * d ** 3 - (bf - tw) * hw ** 3) / 12;
+  const J = (1 / 3) * (2 * bf * tf ** 3 + hw * tw ** 3); // dramatically smaller than a closed section of similar size
+  return { type: 'ibeam', I, J, d, bf, tf, tw, hw, yMax: d / 2, rMax: Math.sqrt((bf / 2) ** 2 + (d / 2) ** 2) };
+}
+
+function torsionShear(section, T, oy, oz) {
+  if (section.type === 'ibeam') {
+    // Open thin-walled approximation: shear scales with LOCAL wall thickness,
+    // not distance from the centroid — the whole point of this comparison.
+    const hh = section.d / 2 - section.tf;
+    const tLocal = Math.abs(oy) > hh ? section.tf : section.tw;
+    return (T * tLocal) / section.J;
+  }
+  const r = Math.sqrt(oy ** 2 + oz ** 2);
+  return (T * r) / section.J;
+}
+function maxTorsionShearAt(section, maxT) {
+  if (section.type === 'ibeam') return (maxT * Math.max(section.tf, section.tw)) / section.J;
+  return (maxT * section.rMax) / section.J;
+}
+
+// ---- Bending: point load vs UDL -----------------------------------------
+function cantileverPointDeflection(x, P, L, EI) { return (-P * x ** 2 * (3 * L - x)) / (6 * EI); }
+function cantileverPointMoment(x, P, L) { return -P * (L - x); }
+function ssPointDeflection(x, P, L, EI) { const xa = x <= L / 2 ? x : L - x; return (-P * xa * (3 * L ** 2 - 4 * xa ** 2)) / (48 * EI); }
+function ssPointMoment(x, P, L) { const xa = x <= L / 2 ? x : L - x; return (-P * xa) / 2; }
+
+function cantileverUDLDeflection(x, w, L, EI) { return (-w * x ** 2 * (6 * L ** 2 - 4 * L * x + x ** 2)) / (24 * EI); }
+function cantileverUDLMoment(x, w, L) { return (-w * (L - x) ** 2) / 2; }
+function ssUDLDeflection(x, w, L, EI) { return (-w * x * (L ** 3 - 2 * L * x ** 2 + x ** 3)) / (24 * EI); }
+function ssUDLMoment(x, w, L) { return (-w * x * (L - x)) / 2; }
+
+function bendingDeflection(xBeam, support, loadType, P, L, EI) {
+  if (loadType === 'point') return support === 'cantilever' ? cantileverPointDeflection(xBeam, P, L, EI) : ssPointDeflection(xBeam, P, L, EI);
+  return support === 'cantilever' ? cantileverUDLDeflection(xBeam, P, L, EI) : ssUDLDeflection(xBeam, P, L, EI);
+}
+function bendingMoment(xBeam, support, loadType, P, L) {
+  if (loadType === 'point') return support === 'cantilever' ? cantileverPointMoment(xBeam, P, L) : ssPointMoment(xBeam, P, L);
+  return support === 'cantilever' ? cantileverUDLMoment(xBeam, P, L) : ssUDLMoment(xBeam, P, L);
+}
+function bendingStress(M, y, I) { return (M * y) / I; }
+
+// ---- Torsion: always point-applied torque -------------------------------
+function cantileverTwist(x, T, GJ) { return (T * x) / GJ; }
+function cantileverTorque(x, T) { return T; }
+function ssTwist(x, T, L, GJ) { const half = L / 2; return x <= half ? (T * x) / (2 * GJ) : (T * (L - x)) / (2 * GJ); }
+function ssTorque(x, T, L) { return x <= L / 2 ? T / 2 : -T / 2; }
+function torsionTwist(xBeam, support, T, L, GJ) { return support === 'cantilever' ? cantileverTwist(xBeam, T, GJ) : ssTwist(xBeam, T, L, GJ); }
+function torsionTorque(xBeam, support, T, L) { return support === 'cantilever' ? cantileverTorque(xBeam, T) : ssTorque(xBeam, T, L); }
+
+// ---- Reactions, for the free-body diagram --------------------------------
+function computeReactions(support, loadType, mode, P, T, L) {
+  const r = {};
+  if (mode === 'bending' || mode === 'combined') {
+    if (support === 'cantilever') {
+      r.R = loadType === 'point' ? P : P * L;
+      r.M0 = loadType === 'point' ? P * L : (P * L * L) / 2;
+    } else {
+      r.R1 = loadType === 'point' ? P / 2 : (P * L) / 2;
+      r.R2 = r.R1;
+    }
+  }
+  if (mode === 'torsion' || mode === 'combined') {
+    if (support === 'cantilever') r.TR = T;
+    else { r.TR1 = T / 2; r.TR2 = T / 2; }
+  }
+  return r;
+}
+
+// =========================================================================
+// GRID TEXTURE
+// =========================================================================
+function createGridTexture({ size = 512, squares = 10, lineColor = '#0A0E14', fillA = '#1B2634', fillB = '#212E40' } = {}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const cell = size / squares;
+  for (let i = 0; i < squares; i++) for (let j = 0; j < squares; j++) {
+    ctx.fillStyle = (i + j) % 2 === 0 ? fillA : fillB;
+    ctx.fillRect(i * cell, j * cell, cell, cell);
+  }
+  ctx.strokeStyle = lineColor; ctx.lineWidth = 2;
+  for (let i = 0; i <= squares; i++) {
+    ctx.beginPath(); ctx.moveTo(i * cell, 0); ctx.lineTo(i * cell, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i * cell); ctx.lineTo(size, i * cell); ctx.stroke();
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping; texture.wrapT = THREE.RepeatWrapping;
+  return texture;
+}
+
+// =========================================================================
+// SCENE SETUP
+// =========================================================================
+const wrap = document.getElementById('canvas-wrap');
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+wrap.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#0A0E14');
+scene.fog = new THREE.Fog('#0A0E14', 14, 26);
+
+const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+let camTarget = new THREE.Vector3(0, 0, 0);
+let camRadius = 10.5, camTheta = Math.PI * 0.28, camPhi = Math.PI * 0.36;
+function updateCamera() {
+  camPhi = Math.max(0.05, Math.min(Math.PI * 0.92, camPhi));
+  camRadius = Math.max(3.0, Math.min(20, camRadius));
+  camera.position.set(
+    camTarget.x + camRadius * Math.sin(camPhi) * Math.sin(camTheta),
+    camTarget.y + camRadius * Math.cos(camPhi),
+    camTarget.z + camRadius * Math.sin(camPhi) * Math.cos(camTheta)
+  );
+  camera.lookAt(camTarget);
+}
+updateCamera();
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.35);
+fillLight.position.set(-2, -3, 6);
+scene.add(fillLight);
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.1);
+keyLight.position.set(5, 8, 4); keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(1024, 1024);
+keyLight.shadow.camera.left = -8; keyLight.shadow.camera.right = 8;
+keyLight.shadow.camera.top = 8; keyLight.shadow.camera.bottom = -8;
+scene.add(keyLight);
+const rimLight = new THREE.DirectionalLight(0x4fa8ff, 0.25);
+rimLight.position.set(-6, 3, -4);
+scene.add(rimLight);
+
+const gridHelper = new THREE.GridHelper(24, 48, 0x233044, 0x1c2430);
+gridHelper.position.y = -0.75;
+scene.add(gridHelper);
+
+// -------------------------------------------------------------------------
+// Beam geometry builders — rectangular keeps the fine BoxGeometry grid;
+// circular/I-beam use an extruded cross-section so any shape can be swapped in.
+// -------------------------------------------------------------------------
+const X_SEG = 64;
+
+function buildBeamGeometry(section) {
+  if (section === 'rect') {
+    const { H, D } = SECTION_DIMS.rect;
+    return new THREE.BoxGeometry(BEAM.L, H, D, X_SEG, 10, 10);
+  }
+  if (section === 'circle') {
+    const { R } = SECTION_DIMS.circle;
+    const shape = new THREE.Shape();
+    shape.absarc(0, 0, R, 0, Math.PI * 2, false);
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: BEAM.L, steps: X_SEG, bevelEnabled: false, curveSegments: 40 });
+    geo.rotateY(Math.PI / 2);
+    geo.translate(-BEAM.L / 2, 0, 0);
+    return geo;
+  }
+  // ibeam
+  const { d, bf, tf, tw } = SECTION_DIMS.ibeam;
+  const hb = bf / 2, hd = d / 2, htw = tw / 2, hh = d / 2 - tf;
+  const shape = new THREE.Shape();
+  shape.moveTo(-hb, hd); shape.lineTo(hb, hd); shape.lineTo(hb, hh); shape.lineTo(htw, hh);
+  shape.lineTo(htw, -hh); shape.lineTo(hb, -hh); shape.lineTo(hb, -hd); shape.lineTo(-hb, -hd);
+  shape.lineTo(-hb, -hh); shape.lineTo(-htw, -hh); shape.lineTo(-htw, hh); shape.lineTo(-hb, hh); shape.lineTo(-hb, hd);
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: BEAM.L, steps: X_SEG, bevelEnabled: false });
+  geo.rotateY(Math.PI / 2);
+  geo.translate(-BEAM.L / 2, 0, 0);
+  return geo;
+}
+
+function visualExtents(section) {
+  if (section === 'rect') return SECTION_DIMS.rect;
+  if (section === 'circle') return { H: SECTION_DIMS.circle.R * 2, D: SECTION_DIMS.circle.R * 2 };
+  return { H: SECTION_DIMS.ibeam.d, D: SECTION_DIMS.ibeam.bf };
+}
+
+const texture = createGridTexture({ squares: 10 });
+const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.65, metalness: 0.04, side: THREE.DoubleSide });
+const beamMesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+beamMesh.castShadow = true; beamMesh.receiveShadow = true;
+scene.add(beamMesh);
+
+let ORIGINAL = null;
+let currentSectionProps = null;
+
+function rebuildBeamGeometry() {
+  const oldGeo = beamMesh.geometry;
+  const geo = buildBeamGeometry(state.section);
+  const posAttr = geo.getAttribute('position');
+  ORIGINAL = Float32Array.from(posAttr.array);
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(posAttr.count * 3), 3));
+  beamMesh.geometry = geo;
+  if (oldGeo) oldGeo.dispose();
+
+  currentSectionProps = getSectionProps(state.section);
+
+  if (state.section === 'rect') texture.repeat.set(BEAM.L / SECTION_DIMS.rect.H, 1);
+  applyMaterialMap();
+}
+
+// The checker texture and the stress heatmap both want to control surface
+// color — showing both at once multiplies them together and muddies the
+// heatmap badly. Show the grid only when the heatmap is off (its own
+// purpose — watching squares warp — and the colored heatmap never overlap.
+function applyMaterialMap() {
+  material.map = (!state.heatmap && state.section === 'rect') ? texture : null;
+  material.needsUpdate = true;
+}
+
+// 3-stop gradient (cold -> mid -> hot) reads far more clearly than a
+// straight 2-color lerp, which goes muddy grey/purple in the middle.
+const HEAT_COLD = new THREE.Color('#2E6BFF'), HEAT_MID = new THREE.Color('#FFD24F'), HEAT_HOT = new THREE.Color('#FF3B30');
+function heatColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  return t < 0.5 ? HEAT_COLD.clone().lerp(HEAT_MID, t * 2) : HEAT_MID.clone().lerp(HEAT_HOT, (t - 0.5) * 2);
+}
+const BEND_UNIFORM = new THREE.Color('#4FA8FF'), TORSION_UNIFORM = new THREE.Color('#FF8A3D'), COMBINED_UNIFORM = new THREE.Color('#B084FF');
+
+const state = {
+  mode: 'bending', support: 'cantilever', loadType: 'point', section: 'rect',
+  P: 45, T: 45, scale: 35, heatmap: true, inspectX: 0, elementTheta: 0
+};
+
+// Where the stress is actually largest: the fixed end for a cantilever
+// (moment peaks there, not at the tip — only the deflection peaks at the
+// tip), midspan for simply-supported.
+function defaultInspectX() { return state.support === 'cantilever' ? 0 : BEAM.L / 2; }
+
+// Shared by the mesh deformation loop AND the pick-marker/cross-section
+// tools, so every visual stays numerically consistent with the 3D mesh.
+function deformedPosition(ox, oy, oz) {
+  const xBeam = ox + BEAM.L / 2;
+  let ry = oy, rz = oz;
+  if (state.mode === 'torsion' || state.mode === 'combined') {
+    const theta = torsionTwist(xBeam, state.support, state.T, BEAM.L, BEAM.GJ_REF);
+    const amp = theta * state.scale;
+    const c = Math.cos(amp), s = Math.sin(amp);
+    ry = oy * c - oz * s; rz = oy * s + oz * c;
+  }
+  let ny = ry, nz = rz;
+  if (state.mode === 'bending' || state.mode === 'combined') {
+    const defl = bendingDeflection(xBeam, state.support, state.loadType, state.P, BEAM.L, BEAM.EI_REF);
+    ny = ry + defl * state.scale;
+  }
+  return { x: ox, y: ny, z: nz };
+}
+
+function localStressAt(ox, oy, oz) {
+  const xBeam = ox + BEAM.L / 2;
+  const section = currentSectionProps;
+  let sigma = 0, tau = 0;
+  if (state.mode === 'bending' || state.mode === 'combined') {
+    const M = bendingMoment(xBeam, state.support, state.loadType, state.P, BEAM.L);
+    sigma = bendingStress(M, oy, section.I);
+  }
+  if (state.mode === 'torsion' || state.mode === 'combined') {
+    const Tq = torsionTorque(xBeam, state.support, state.T, BEAM.L);
+    tau = torsionShear(section, Tq, oy, oz);
+  }
+  return { sigma, tau, xBeam };
+}
+
+function deform() {
+  const section = currentSectionProps;
+  const posAttr = beamMesh.geometry.getAttribute('position');
+  const colorAttr = beamMesh.geometry.getAttribute('color');
+  const EI = BEAM.EI_REF, GJ = BEAM.GJ_REF;
+  const maxRef = 100;
+
+  const maxM = Math.abs(bendingMoment(
+    state.support === 'cantilever' ? 0 : BEAM.L / 2, state.support, state.loadType, maxRef, BEAM.L
+  ));
+  const maxSigma = Math.abs(bendingStress(maxM, section.yMax, section.I));
+  const maxTau = Math.abs(maxTorsionShearAt(section, maxRef));
+
+  for (let i = 0; i < posAttr.count; i++) {
+    const ox = ORIGINAL[i * 3], oy = ORIGINAL[i * 3 + 1], oz = ORIGINAL[i * 3 + 2];
+    const xBeam = ox + BEAM.L / 2;
+
+    let ry = oy, rz = oz;
+    if (state.mode === 'torsion' || state.mode === 'combined') {
+      const theta = torsionTwist(xBeam, state.support, state.T, BEAM.L, GJ);
+      const amp = theta * state.scale;
+      const c = Math.cos(amp), s = Math.sin(amp);
+      ry = oy * c - oz * s; rz = oy * s + oz * c;
+    }
+    let ny = ry, nz = rz;
+    if (state.mode === 'bending' || state.mode === 'combined') {
+      const defl = bendingDeflection(xBeam, state.support, state.loadType, state.P, BEAM.L, EI);
+      ny = ry + defl * state.scale;
+    }
+    posAttr.setXYZ(i, ox, ny, nz);
+
+    let sigma = 0, tau = 0;
+    if (state.mode === 'bending' || state.mode === 'combined') {
+      const M = bendingMoment(xBeam, state.support, state.loadType, state.P, BEAM.L);
+      sigma = bendingStress(M, oy, section.I);
+    }
+    if (state.mode === 'torsion' || state.mode === 'combined') {
+      const Tq = torsionTorque(xBeam, state.support, state.T, BEAM.L);
+      tau = torsionShear(section, Tq, oy, oz);
+    }
+    let stressNorm;
+    if (state.mode === 'combined') {
+      const vm = Math.sqrt(sigma ** 2 + 3 * tau ** 2);
+      const maxVM = Math.sqrt(maxSigma ** 2 + 3 * maxTau ** 2);
+      stressNorm = maxVM !== 0 ? Math.min(vm / maxVM, 1) : 0;
+    } else if (state.mode === 'bending') {
+      stressNorm = maxSigma !== 0 ? Math.min(Math.abs(sigma) / maxSigma, 1) : 0;
+    } else {
+      stressNorm = maxTau !== 0 ? Math.min(Math.abs(tau) / maxTau, 1) : 0;
+    }
+
+    let col;
+    if (state.heatmap) col = heatColor(stressNorm);
+    else col = state.mode === 'bending' ? BEND_UNIFORM : state.mode === 'torsion' ? TORSION_UNIFORM : COMBINED_UNIFORM;
+    colorAttr.setXYZ(i, col.r, col.g, col.b);
+  }
+  posAttr.needsUpdate = true; colorAttr.needsUpdate = true;
+  beamMesh.geometry.computeVertexNormals();
+}
+
+// -------------------------------------------------------------------------
+// Supports
+// -------------------------------------------------------------------------
+const supportGroup = new THREE.Group(); scene.add(supportGroup);
+function rebuildSupports() {
+  while (supportGroup.children.length) supportGroup.remove(supportGroup.children[0]);
+  const { H, D } = visualExtents(state.section);
+  const HALF_L = BEAM.L / 2;
+  if (state.support === 'cantilever') {
+    const g = new THREE.Group(); g.position.set(-HALF_L - 0.12, 0, 0);
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.24, H * 2.2, D * 2.2), new THREE.MeshStandardMaterial({ color: 0x141b26, roughness: 0.9, metalness: 0.05 })));
+    for (let i = 0; i < 7; i++) {
+      const h = new THREE.Mesh(new THREE.BoxGeometry(0.03, H * 0.55, 0.03), new THREE.MeshStandardMaterial({ color: 0x2c5c8f }));
+      h.position.set(0.14, (i - 3) * (H * 0.6), 0); h.rotation.z = Math.PI / 4; g.add(h);
+    }
+    supportGroup.add(g);
+  } else {
+    [-HALF_L, HALF_L].forEach((x, idx) => {
+      const g = new THREE.Group(); g.position.set(x, -H / 2 - 0.02, 0);
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.44, 4), new THREE.MeshStandardMaterial({ color: 0x2c5c8f, flatShading: true }));
+      cone.position.y = -0.22; g.add(cone);
+      if (idx === 0) {
+        const base = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.06, 0.6), new THREE.MeshStandardMaterial({ color: 0x141b26 })); base.position.y = -0.46; g.add(base);
+      } else {
+        [-0.12, 0.12].forEach((ox) => { const ball = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), new THREE.MeshStandardMaterial({ color: 0x7c8798 })); ball.position.set(ox, -0.42, 0); g.add(ball); });
+        const base = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.04, 0.6), new THREE.MeshStandardMaterial({ color: 0x141b26 })); base.position.y = -0.5; g.add(base);
+      }
+      supportGroup.add(g);
+    });
+  }
+}
+
+// -------------------------------------------------------------------------
+// Load indicator(s) — force arrow / torque loop, at the right span position(s)
+// -------------------------------------------------------------------------
+const loadGroup = new THREE.Group(); scene.add(loadGroup);
+
+// Force arrow: a plain vertical arrow, translated to follow the beam's
+// actual (deformed) vertical position at its x — so as the load increases
+// and the tip sags, the arrow visibly sags with it.
+function addForceArrow(parent, x, yTop, color) {
+  const g = new THREE.Group(); g.position.set(x, 0, 0);
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.7, 12), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4 }));
+  shaft.position.y = yTop; g.add(shaft);
+  const head = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.24, 16), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4 }));
+  head.position.y = yTop - 0.4; head.rotation.z = Math.PI; g.add(head);
+  parent.add(g);
+  return g;
+}
+
+// Torque loop: THREE.TorusGeometry lies flat in its local XY plane by
+// default, i.e. it encircles the local Z axis — but the beam twists about
+// its own LENGTH axis, which is our world X axis. Rotating the whole group
+// +90 deg about Y re-orients the loop's plane to Y-Z, so it correctly
+// encircles X instead of Z. The arrowhead is a child of this same group, so
+// it's carried along rigidly and its tangent direction stays correct.
+// (Direction check: this mapping sends the arc's positive-angle sense to
+// the same +Y-toward-+Z sense used by the deform() rotation below, so the
+// arrow curls the same way the mesh actually twists for T > 0.)
+function addTorqueLoop(parent, x, color) {
+  // Outer group: position along the beam + the live spin (rotation.x only —
+  // set by the caller). Inner group: fixes the loop's plane orientation.
+  // Keeping these as two separate nodes (rather than combining rotation.x
+  // and rotation.y on one Object3D) guarantees the composition order
+  // world = T(x) * Rx(spin) * Ry(90deg) * geometry, i.e. orient the plane
+  // first, then spin about the beam's own X axis — with no Euler-order ambiguity.
+  const outer = new THREE.Group(); outer.position.set(x, 0, 0);
+  const inner = new THREE.Group(); inner.rotation.y = Math.PI / 2;
+  const torus = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.045, 12, 32, Math.PI * 1.5), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.45 }));
+  inner.add(torus);
+  const head = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.22, 16), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.45 }));
+  head.position.set(0, -0.5, 0); head.rotation.z = -Math.PI / 2; inner.add(head);
+  outer.add(inner);
+  parent.add(outer);
+  return outer;
+}
+
+const EDGE_INSET = 0.35; // keep symbols a touch clear of the support / end cap, not flush with it
+
+function rebuildLoadIndicator() {
+  while (loadGroup.children.length) loadGroup.remove(loadGroup.children[0]);
+  const { H } = visualExtents(state.section);
+  const HALF_L = BEAM.L / 2;
+  const bendAccent = 0x4fa8ff, torsionAccent = 0xff8a3d;
+  const EI = BEAM.EI_REF, GJ = BEAM.GJ_REF;
+  const tipX = state.support === 'cantilever' ? HALF_L - EDGE_INSET : 0;
+
+  if (state.mode === 'bending' || state.mode === 'combined') {
+    if (state.loadType === 'point') {
+      // Follow the beam's live deflection at this x, scaled the same way the mesh is.
+      const defl = bendingDeflection(tipX + BEAM.L / 2, state.support, state.loadType, state.P, BEAM.L, EI) * state.scale;
+      addForceArrow(loadGroup, tipX, H / 2 + 0.85 + defl, bendAccent);
+    } else {
+      for (let i = 0; i <= 6; i++) {
+        const x = -HALF_L + EDGE_INSET + (i / 6) * (BEAM.L - 2 * EDGE_INSET);
+        const defl = bendingDeflection(x + BEAM.L / 2, state.support, state.loadType, state.P, BEAM.L, EI) * state.scale;
+        addForceArrow(loadGroup, x, H / 2 + 0.55 + defl, bendAccent);
+      }
+    }
+  }
+  if (state.mode === 'torsion' || state.mode === 'combined') {
+    // Spin the loop by the beam's own live twist angle at this x, so the
+    // symbol visibly rotates together with the cross-section it marks.
+    const theta = torsionTwist(tipX + BEAM.L / 2, state.support, state.T, BEAM.L, GJ) * state.scale;
+    const loop = addTorqueLoop(loadGroup, tipX, torsionAccent);
+    loop.rotation.x = theta;
+  }
+}
+
+// -------------------------------------------------------------------------
+// Axis gizmo
+// -------------------------------------------------------------------------
+const gizmoScene = new THREE.Scene();
+const gizmoCamera = new THREE.OrthographicCamera(-1.6, 1.6, 1.6, -1.6, 0.1, 6);
+function addGizmoAxis(dir, color) { gizmoScene.add(new THREE.ArrowHelper(dir, new THREE.Vector3(0, 0, 0), 1.15, color, 0.32, 0.16)); }
+addGizmoAxis(new THREE.Vector3(1, 0, 0), 0xff6b6b);
+addGizmoAxis(new THREE.Vector3(0, 1, 0), 0x4fa8ff);
+addGizmoAxis(new THREE.Vector3(0, 0, 1), 0xffd24f);
+function renderGizmo() {
+  const dpr = renderer.getPixelRatio();
+  const size = 84 * dpr, margin = 24 * dpr;
+  const w = window.innerWidth * dpr, h = window.innerHeight * dpr;
+  gizmoCamera.position.copy(camera.position).sub(camTarget).normalize().multiplyScalar(3.2);
+  gizmoCamera.up.copy(camera.up); gizmoCamera.lookAt(0, 0, 0);
+  renderer.setScissorTest(true);
+  renderer.setScissor(w - size - margin, h - size - margin, size, size);
+  renderer.setViewport(w - size - margin, h - size - margin, size, size);
+  renderer.render(gizmoScene, gizmoCamera);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, w, h);
+}
+
+// -------------------------------------------------------------------------
+// Pick marker (click-to-inspect)
+// -------------------------------------------------------------------------
+const pickMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.055, 16, 16),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.6 })
+);
+pickMarker.visible = false;
+scene.add(pickMarker);
+
+// =========================================================================
+// UI
+// =========================================================================
+const modeExplain = document.getElementById('modeExplain');
+const readoutPanel = document.getElementById('readoutPanel');
+const pField = document.getElementById('pField');
+const tField = document.getElementById('tField');
+const pLabel = document.getElementById('pLabel');
+const pValueEl = document.getElementById('pValue');
+const tValueEl = document.getElementById('tValue');
+const scaleValueEl = document.getElementById('scaleValue');
+const loadTypeSeg = document.getElementById('loadTypeSeg');
+const fbdWrap = document.getElementById('fbdWrap');
+const mohrWrap = document.getElementById('mohrWrap');
+
+function fmt(n, d) { return Number.isFinite(n) ? n.toFixed(d) : '0'; }
+function accentHexFor(mode) { return mode === 'bending' ? '#4FA8FF' : mode === 'torsion' ? '#FF8A3D' : '#B084FF'; }
+
+function refreshTopControls() {
+  const accentHex = accentHexFor(state.mode);
+
+  document.querySelectorAll('#modeSeg button').forEach((b) => {
+    const active = b.dataset.value === state.mode;
+    b.classList.toggle('active', active);
+    b.style.backgroundColor = active ? accentHexFor(b.dataset.value) : 'transparent';
+  });
+  document.querySelectorAll('#supportSeg button').forEach((b) => {
+    const active = b.dataset.value === state.support;
+    b.classList.toggle('active', active); b.style.backgroundColor = active ? '#3A4658' : 'transparent';
+  });
+  document.querySelectorAll('#loadTypeSeg button').forEach((b) => {
+    const active = b.dataset.value === state.loadType;
+    b.classList.toggle('active', active); b.style.backgroundColor = active ? '#3A4658' : 'transparent';
+  });
+  document.querySelectorAll('#sectionSeg button').forEach((b) => {
+    const active = b.dataset.value === state.section;
+    b.classList.toggle('active', active); b.style.backgroundColor = active ? '#3A4658' : 'transparent';
+  });
+
+  loadTypeSeg.style.display = state.mode === 'torsion' ? 'none' : 'inline-flex';
+  pField.style.display = state.mode === 'torsion' ? 'none' : 'block';
+  tField.style.display = state.mode === 'bending' ? 'none' : 'block';
+
+  pLabel.textContent = state.loadType === 'udl' ? 'Load, w' : 'Load, P';
+  pValueEl.textContent = state.P;
+  tValueEl.textContent = state.T;
+  scaleValueEl.textContent = state.scale + '×';
+
+  document.querySelectorAll('input[type="range"]').forEach((el) => el.style.setProperty('--accent', accentHex));
+  document.getElementById('heatmapSwitch').style.backgroundColor = state.heatmap ? accentHex : 'var(--line)';
+  document.querySelector('#heatmapSwitch .knob').style.transform = state.heatmap ? 'translateX(16px)' : 'translateX(0)';
+  document.getElementById('heatLegend').style.visibility = state.heatmap ? 'visible' : 'hidden';
+
+  modeExplain.innerHTML = state.mode === 'bending'
+    ? `A cross-section rotates about the <span class="accent-b">Z axis</span> — the beam sags, it doesn't twist.`
+    : state.mode === 'torsion'
+    ? `A cross-section rotates about the <span class="accent-t">X axis</span> — its own length. That's the twist.`
+    : `<span class="accent-c">Both act together</span> — the section sags <em>and</em> twists. Real eccentric or asymmetric loads need a combined-stress check, not just one or the other.`;
+}
+
+function eqBlockHTML(mode) {
+  const accent = mode === 'bending' ? 'var(--bend)' : 'var(--torsion)';
+  const EI = BEAM.EI_REF, GJ = BEAM.GJ_REF;
+  if (mode === 'bending') {
+    const x = state.support === 'cantilever' ? BEAM.L : BEAM.L / 2;
+    const y = bendingDeflection(x, state.support, state.loadType, state.P, BEAM.L, EI);
+    const eq = state.loadType === 'point'
+      ? (state.support === 'cantilever' ? 'y(x) = \u2212P x\u00b2(3L\u2212x) / 6EI' : 'y(x) = \u2212Px(3L\u00b2\u22124x\u00b2) / 48EI')
+      : (state.support === 'cantilever' ? 'y(x) = \u2212wx\u00b2(6L\u00b2\u22124Lx+x\u00b2) / 24EI' : 'y(x) = \u2212wx(L\u00b3\u22122Lx\u00b2+x\u00b3) / 24EI');
+    const subLabel = state.support === 'cantilever' ? 'tip deflection y(L)' : 'midspan deflection y(L/2)';
+    return `<div class="block"><p class="label">BENDING</p><p class="eq" style="color:${accent}">${eq}</p><div class="value-row"><span class="value">${fmt(y, 5)}</span><span class="unit">units</span></div><p class="sub">${subLabel}</p></div>`;
+  }
+  const x = state.support === 'cantilever' ? BEAM.L : BEAM.L / 2;
+  const theta = torsionTwist(x, state.support, state.T, BEAM.L, GJ);
+  const subLabel = state.support === 'cantilever' ? 'twist at free end \u03b8(L)' : 'twist at midspan \u03b8(L/2)';
+  return `<div class="block"><p class="label">TORSION</p><p class="eq" style="color:${accent}">\u03b8(x) = T x / GJ</p><div class="value-row"><span class="value">${fmt((theta * 180) / Math.PI, 2)}</span><span class="unit">\u00b0</span></div><p class="sub">${subLabel}</p></div>`;
+}
+
+function refreshReadout() {
+  if (state.mode === 'bending') readoutPanel.innerHTML = eqBlockHTML('bending');
+  else if (state.mode === 'torsion') readoutPanel.innerHTML = eqBlockHTML('torsion');
+  else readoutPanel.innerHTML = eqBlockHTML('bending') + eqBlockHTML('torsion');
+}
+
+// ---- Free-body diagram ----------------------------------------------------
+function svgArrowDown(x, y, len, color, label) {
+  return `<line x1="${x}" y1="${y - len}" x2="${x}" y2="${y}" stroke="${color}" stroke-width="2"/>
+    <polygon points="${x - 4},${y - 8} ${x + 4},${y - 8} ${x},${y}" fill="${color}"/>
+    ${label ? `<text x="${x}" y="${y - len - 6}" fill="${color}" font-size="10" text-anchor="middle">${label}</text>` : ''}`;
+}
+function svgArrowUp(x, y, len, color, label) {
+  return `<line x1="${x}" y1="${y}" x2="${x}" y2="${y - len}" stroke="${color}" stroke-width="2"/>
+    <polygon points="${x - 4},${y - len + 8} ${x + 4},${y - len + 8} ${x},${y - len}" fill="${color}"/>
+    ${label ? `<text x="${x}" y="${y + 14}" fill="${color}" font-size="10" text-anchor="middle">${label}</text>` : ''}`;
+}
+function svgTorqueLoop(x, y, color, label) {
+  return `<circle cx="${x}" cy="${y}" r="10" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="22 6"/>
+    <polygon points="${x + 8},${y - 8} ${x + 14},${y - 4} ${x + 6},${y - 1}" fill="${color}"/>
+    ${label ? `<text x="${x}" y="${y - 18}" fill="${color}" font-size="10" text-anchor="middle">${label}</text>` : ''}`;
+}
+function buildFBD() {
+  const W = 300, H = 130, baseY = 55, x0 = 34, x1 = 266;
+  const mid = (x0 + x1) / 2;
+  const bendAccent = '#4FA8FF', torsionAccent = '#FF8A3D';
+  let s = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">`;
+  s += `<line x1="${x0}" y1="${baseY}" x2="${x1}" y2="${baseY}" stroke="#7C8798" stroke-width="3"/>`;
+
+  if (state.support === 'cantilever') {
+    s += `<rect x="${x0 - 10}" y="${baseY - 26}" width="8" height="52" fill="#141B26" stroke="#1C2430"/>`;
+    for (let i = 0; i < 6; i++) { const yy = baseY - 22 + i * 9; s += `<line x1="${x0 - 10}" y1="${yy}" x2="${x0 - 18}" y2="${yy + 7}" stroke="#2C5C8F" stroke-width="1.5"/>`; }
+  } else {
+    s += `<polygon points="${x0},${baseY} ${x0 - 8},${baseY + 14} ${x0 + 8},${baseY + 14}" fill="none" stroke="#2C5C8F" stroke-width="2"/>`;
+    s += `<polygon points="${x1},${baseY} ${x1 - 8},${baseY + 14} ${x1 + 8},${baseY + 14}" fill="none" stroke="#2C5C8F" stroke-width="2"/>`;
+    s += `<circle cx="${x1 - 5}" cy="${baseY + 18}" r="3" fill="#7C8798"/><circle cx="${x1 + 5}" cy="${baseY + 18}" r="3" fill="#7C8798"/>`;
+  }
+
+  const applyX = state.support === 'cantilever' ? x1 - 6 : mid;
+  const r = computeReactions(state.support, state.loadType, state.mode, state.P, state.T, BEAM.L);
+
+  if (state.mode === 'bending' || state.mode === 'combined') {
+    if (state.loadType === 'point') {
+      s += svgArrowDown(applyX, baseY - 20, 22, bendAccent, 'P');
+    } else {
+      s += `<line x1="${x0}" y1="${baseY - 34}" x2="${x1}" y2="${baseY - 34}" stroke="${bendAccent}" stroke-width="1.5"/>`;
+      for (let i = 0; i <= 6; i++) { const xx = x0 + (i / 6) * (x1 - x0); s += svgArrowDown(xx, baseY - 20, 14, bendAccent, ''); }
+      s += `<text x="${mid}" y="${baseY - 40}" fill="${bendAccent}" font-size="10" text-anchor="middle">w</text>`;
+    }
+    if (state.support === 'cantilever') {
+      s += svgArrowUp(x0 + 20, baseY, 20, bendAccent, `R=${fmt(r.R, 1)}`);
+      s += `<text x="${x0 - 2}" y="${baseY + 34}" fill="${bendAccent}" font-size="9" text-anchor="middle">M\u2080=${fmt(r.M0, 1)}</text>`;
+    } else {
+      s += svgArrowUp(x0, baseY + 26, 14, bendAccent, `R\u2081=${fmt(r.R1, 1)}`);
+      s += svgArrowUp(x1, baseY + 26, 14, bendAccent, `R\u2082=${fmt(r.R2, 1)}`);
+    }
+  }
+  if (state.mode === 'torsion' || state.mode === 'combined') {
+    const ty = baseY + (state.mode === 'combined' ? 44 : 0);
+    s += svgTorqueLoop(applyX, ty - 30, torsionAccent, 'T');
+    if (state.support === 'cantilever') s += svgTorqueLoop(x0, ty - 30, torsionAccent, `T\u1d63=${fmt(r.TR, 1)}`);
+    else { s += svgTorqueLoop(x0, ty - 30, torsionAccent, `${fmt(r.TR1, 1)}`); s += svgTorqueLoop(x1, ty - 30, torsionAccent, `${fmt(r.TR2, 1)}`); }
+  }
+  s += `</svg>`;
+  fbdWrap.innerHTML = s;
+}
+
+// ---- Plane-stress transformation (the actual math behind "rotate the element") ----
+// Standard stress-transformation equations for a plane-stress point. thetaDeg
+// is the angle the CUTTING PLANE (the element) is rotated by; sx'/sy'/txy'
+// are the normal/shear stresses on that rotated element's faces. At the
+// specific angle where txy' = 0, sx' and sy' ARE the principal stresses —
+// that's the entire content of "principal stresses" in one formula.
+function transformStress(sigmaX, sigmaY, tauXY, thetaDeg) {
+  const th = (thetaDeg * Math.PI) / 180;
+  const avg = (sigmaX + sigmaY) / 2, diff = (sigmaX - sigmaY) / 2;
+  const c2 = Math.cos(2 * th), s2 = Math.sin(2 * th);
+  return { sx: avg + diff * c2 + tauXY * s2, sy: avg - diff * c2 - tauXY * s2, txy: -diff * s2 + tauXY * c2 };
+}
+function principalAngleDeg(sigma, tau) {
+  let t = (0.5 * Math.atan2(2 * tau, sigma) * 180) / Math.PI;
+  return ((t % 180) + 180) % 180;
+}
+
+// ---- Mohr's circle ---------------------------------------------------------
+// thetaDeg (optional) adds a second, moving marker showing where the CURRENT
+// element rotation sits on the same circle — computed by literally plugging
+// thetaDeg into the same transform used to draw the element, so the two
+// visuals are guaranteed to agree.
+function buildMohr(sigma, tau, thetaDeg) {
+  const savg = sigma / 2;
+  const Rm = Math.sqrt(savg * savg + tau * tau);
+  const s1 = savg + Rm, s2 = savg - Rm;
+  const thetaP = Rm !== 0 ? (0.5 * Math.atan2(2 * tau, sigma) * 180) / Math.PI : 0;
+
+  const W = 280, H = 220, cx = W / 2, cy = H / 2;
+  const range = Math.max(Rm * 1.4, 1e-6);
+  const scalePx = 80 / range;
+  const px = (v) => cx + v * scalePx;
+  const py = (v) => cy - v * scalePx;
+
+  let s = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">`;
+  s += `<line x1="10" y1="${cy}" x2="${W - 10}" y2="${cy}" stroke="#1C2430" stroke-width="1"/>`;
+  s += `<line x1="${cx}" y1="10" x2="${cx}" y2="${H - 10}" stroke="#1C2430" stroke-width="1"/>`;
+  s += `<text x="${W - 14}" y="${cy - 6}" fill="#7C8798" font-size="9" text-anchor="end">\u03c3</text>`;
+  s += `<text x="${cx + 8}" y="20" fill="#7C8798" font-size="9">\u03c4</text>`;
+  s += `<circle cx="${px(savg)}" cy="${cy}" r="${Rm * scalePx}" fill="none" stroke="#B084FF" stroke-width="1.75"/>`;
+  s += `<line x1="${px(sigma)}" y1="${py(tau)}" x2="${px(0)}" y2="${py(-tau)}" stroke="#7C8798" stroke-width="1" stroke-dasharray="3 3"/>`;
+  s += `<circle cx="${px(sigma)}" cy="${py(tau)}" r="4" fill="#FF3B30"/>`;
+  s += `<text x="${px(sigma) + 7}" y="${py(tau) - 6}" fill="#FF3B30" font-size="9">A (\u03c3,\u03c4)</text>`;
+  s += `<circle cx="${px(0)}" cy="${py(-tau)}" r="4" fill="#2E6BFF"/>`;
+  s += `<text x="${px(0) + 7}" y="${py(-tau) + 12}" fill="#2E6BFF" font-size="9">B (\u03c3\u1d67,-\u03c4)</text>`;
+  s += `<circle cx="${px(s1)}" cy="${cy}" r="3.5" fill="#FFD24F"/>`;
+  s += `<text x="${px(s1)}" y="${cy - 10}" fill="#FFD24F" font-size="9" text-anchor="middle">\u03c3\u2081</text>`;
+  s += `<circle cx="${px(s2)}" cy="${cy}" r="3.5" fill="#FFD24F"/>`;
+  s += `<text x="${px(s2)}" y="${cy - 10}" fill="#FFD24F" font-size="9" text-anchor="middle">\u03c3\u2082</text>`;
+  const arcR = 22;
+  const ang = Math.atan2(py(tau) - cy, px(sigma) - px(savg));
+  s += `<path d="M ${px(savg) + arcR} ${cy} A ${arcR} ${arcR} 0 0 ${ang < 0 ? 1 : 0} ${px(savg) + arcR * Math.cos(ang)} ${cy + arcR * Math.sin(ang)}" fill="none" stroke="#7C8798" stroke-width="1"/>`;
+  s += `<text x="${px(savg) + arcR + 4}" y="${cy - 4}" fill="#7C8798" font-size="8">2\u03b8p</text>`;
+
+  let rotated = null;
+  if (thetaDeg !== undefined) {
+    rotated = transformStress(sigma, 0, tau, thetaDeg);
+    s += `<line x1="${px(savg)}" y1="${cy}" x2="${px(rotated.sx)}" y2="${py(rotated.txy)}" stroke="#E8ECF2" stroke-width="1" stroke-dasharray="2 2"/>`;
+    s += `<circle cx="${px(rotated.sx)}" cy="${py(rotated.txy)}" r="4.5" fill="#FFFFFF" stroke="#0A0E14" stroke-width="1"/>`;
+  }
+
+  s += `</svg>`;
+  return { svg: s, s1, s2, tauMax: Rm, thetaP, rotated };
+}
+
+// ---- Rotating stress element — the actual "watch shear vanish" visual -----
+function stressArrowLocal(fx, fy, dx, dy, len, color) {
+  if (len < 1) return '';
+  const x2 = fx + dx * len, y2 = fy + dy * len;
+  const headLen = 6, headW = 4;
+  const px_ = -dy, py_ = dx;
+  const bx = x2 - dx * headLen, by = y2 - dy * headLen;
+  return `<line x1="${fx}" y1="${fy}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2"/>
+    <polygon points="${x2},${y2} ${bx + px_ * headW},${by + py_ * headW} ${bx - px_ * headW},${by - py_ * headW}" fill="${color}"/>`;
+}
+function buildStressElementSVG(sigma, tau, thetaDeg, range) {
+  const t = transformStress(sigma, 0, tau, thetaDeg);
+  const W = 200, H = 200, cx = W / 2, cy = H / 2, half = 42, maxArrow = 30;
+  const lenOf = (v) => (Math.abs(v) < 1e-9 ? 0 : Math.max(Math.min((Math.abs(v) / range) * maxArrow, maxArrow), 5));
+  const sxLen = lenOf(t.sx), syLen = lenOf(t.sy), txyLen = lenOf(t.txy);
+  const normalColor = '#FF3B30', shearColor = '#4FA8FF';
+
+  let inner = `<rect x="${cx - half}" y="${cy - half}" width="${half * 2}" height="${half * 2}" fill="rgba(176,132,255,0.08)" stroke="#B084FF" stroke-width="1.5"/>`;
+  if (sxLen) {
+    const d = t.sx > 0 ? 1 : -1;
+    inner += stressArrowLocal(cx + half, cy, d, 0, sxLen, normalColor);
+    inner += stressArrowLocal(cx - half, cy, -d, 0, sxLen, normalColor);
+  }
+  if (syLen) {
+    const d = t.sy > 0 ? 1 : -1;
+    inner += stressArrowLocal(cx, cy - half, 0, -d, syLen, normalColor);
+    inner += stressArrowLocal(cx, cy + half, 0, d, syLen, normalColor);
+  }
+  if (txyLen) {
+    const d = t.txy > 0 ? 1 : -1;
+    inner += stressArrowLocal(cx + half, cy, 0, -d, txyLen, shearColor);
+    inner += stressArrowLocal(cx - half, cy, 0, d, txyLen, shearColor);
+    inner += stressArrowLocal(cx, cy - half, d, 0, txyLen, shearColor);
+    inner += stressArrowLocal(cx, cy + half, -d, 0, txyLen, shearColor);
+  }
+  const svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; max-width:200px; display:block; margin:0 auto;"><g transform="rotate(${-thetaDeg} ${cx} ${cy})">${inner}</g></svg>`;
+  return { svg, sx: t.sx, sy: t.sy, txy: t.txy };
+}
+
+// ---- The actual "why" — sweep theta 0->180 and show BOTH curves at once.
+// The key fact this chart exists to make visible: d(sigma_x')/d(theta) is
+// EXACTLY 2*tau_x'y'(theta) at every angle (a direct calculus consequence
+// of the transform equations). So wherever the blue shear curve crosses
+// zero, the red normal-stress curve is necessarily at a flat spot — a
+// local max or min. Those maxima/minima ARE sigma_1 and sigma_2. That's
+// the whole definition of "principal stress": not a separate concept,
+// just the peak of this exact curve.
+function buildTransformChart(sigma, tau, thetaDeg, s1, s2, thetaP) {
+  const N = 72, W = 280, H = 130, padL = 30, padR = 10, padT = 12, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const range = Math.max(Math.abs(s1), Math.abs(s2), Math.abs(tau), 1e-6) * 1.2;
+  const px = (th) => padL + (th / 180) * plotW;
+  const py = (v) => padT + plotH / 2 - (v / range) * (plotH / 2);
+
+  let sigmaPath = '', tauPath = '';
+  for (let i = 0; i <= N; i++) {
+    const th = (i / N) * 180;
+    const t = transformStress(sigma, 0, tau, th);
+    const cmd = i === 0 ? 'M' : 'L';
+    sigmaPath += `${cmd} ${px(th).toFixed(1)} ${py(t.sx).toFixed(1)} `;
+    tauPath += `${cmd} ${px(th).toFixed(1)} ${py(t.txy).toFixed(1)} `;
+  }
+
+  let s = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">`;
+  s += `<line x1="${padL}" y1="${py(0)}" x2="${W - padR}" y2="${py(0)}" stroke="#1C2430" stroke-width="1"/>`;
+  s += `<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#1C2430" stroke-width="1"/>`;
+
+  // vertical dashed guides at BOTH principal angles, showing where the two curves' special points align
+  [thetaP, (thetaP + 90) % 180].forEach((thp) => {
+    s += `<line x1="${px(thp)}" y1="${padT}" x2="${px(thp)}" y2="${padT + plotH}" stroke="#FFD24F" stroke-width="1" stroke-dasharray="2 2"/>`;
+  });
+
+  s += `<path d="${sigmaPath}" fill="none" stroke="#FF3B30" stroke-width="1.75"/>`;
+  s += `<path d="${tauPath}" fill="none" stroke="#4FA8FF" stroke-width="1.75"/>`;
+
+  // mark the actual peak/trough of sigma_x' (gold) and the actual zero-crossings of tau (green) —
+  // drawn from the real curve data, so if they don't align the picture would show it
+  [thetaP, (thetaP + 90) % 180].forEach((thp) => {
+    const tp = transformStress(sigma, 0, tau, thp);
+    s += `<circle cx="${px(thp)}" cy="${py(tp.sx)}" r="3.5" fill="#FFD24F"/>`;
+    s += `<circle cx="${px(thp)}" cy="${py(0)}" r="3" fill="#3ddc84"/>`;
+  });
+
+  // live marker for the current slider angle, on both curves
+  const cur = transformStress(sigma, 0, tau, thetaDeg);
+  s += `<line x1="${px(thetaDeg)}" y1="${padT}" x2="${px(thetaDeg)}" y2="${padT + plotH}" stroke="#E8ECF2" stroke-width="1"/>`;
+  s += `<circle cx="${px(thetaDeg)}" cy="${py(cur.sx)}" r="3.5" fill="#FF3B30" stroke="#0A0E14" stroke-width="1"/>`;
+  s += `<circle cx="${px(thetaDeg)}" cy="${py(cur.txy)}" r="3.5" fill="#4FA8FF" stroke="#0A0E14" stroke-width="1"/>`;
+
+  s += `<text x="${padL}" y="${H - 6}" fill="#7C8798" font-size="9">0\u00b0</text>`;
+  s += `<text x="${W - padR}" y="${H - 6}" fill="#7C8798" font-size="9" text-anchor="end">180\u00b0</text>`;
+  s += `<text x="${W - padR}" y="${padT + 8}" fill="#FF3B30" font-size="9" text-anchor="end">\u03c3x\u2032(\u03b8)</text>`;
+  s += `<text x="${W - padR}" y="${padT + 20}" fill="#4FA8FF" font-size="9" text-anchor="end">\u03c4x\u2032y\u2032(\u03b8)</text>`;
+  s += `</svg>`;
+  return s;
+}
+
+let lastInspected = null;
+
+function renderStressElement() {
+  if (!lastInspected) return;
+  const { sigma, tau } = lastInspected;
+  const thetaDeg = state.elementTheta;
+  const range = Math.max(Math.sqrt((sigma / 2) ** 2 + tau ** 2) * 1.4, 1e-6);
+  const el = buildStressElementSVG(sigma, tau, thetaDeg, range);
+  document.getElementById('elementSvgWrap').innerHTML = el.svg;
+  const mohr = buildMohr(sigma, tau, thetaDeg);
+  document.getElementById('mohrSvgHolder').innerHTML = mohr.svg;
+  document.getElementById('transformChartWrap').innerHTML = buildTransformChart(sigma, tau, thetaDeg, mohr.s1, mohr.s2, mohr.thetaP);
+  document.getElementById('thetaValue').textContent = Math.round(thetaDeg) + '\u00b0';
+  const nearPrincipal = Math.abs(el.txy) < Math.max(range * 0.012, 1e-4);
+  document.getElementById('elementReadout').innerHTML = `
+    <div class="stat-grid">
+      <span class="k">\u03c3x\u2032 (right/left face)</span><span class="v">${fmt(el.sx, 3)}</span>
+      <span class="k">\u03c3y\u2032 (top/bottom face)</span><span class="v">${fmt(el.sy, 3)}</span>
+      <span class="k">\u03c4x\u2032y\u2032 (shear, every face)</span><span class="v" style="${nearPrincipal ? 'color:#3ddc84;font-weight:600;' : ''}">${fmt(el.txy, 3)}</span>
+    </div>
+    ${nearPrincipal ? `<p style="color:#3ddc84; font-size:12px; margin-top:8px;">\u2713 Shear is zero here \u2014 and notice the red curve below is exactly at a peak or trough right now. That's not a coincidence.</p>` : ''}
+  `;
+}
+
+function showInspection(ox, oy, oz) {
+  const { sigma, tau, xBeam } = localStressAt(ox, oy, oz);
+  const mohr0 = buildMohr(sigma, tau, 0);
+  const vm = Math.sqrt(sigma ** 2 + 3 * tau ** 2);
+  lastInspected = { sigma, tau, xBeam, thetaPNorm: principalAngleDeg(sigma, tau) };
+  state.elementTheta = 0;
+
+  mohrWrap.innerHTML = `
+    <div id="mohrSvgHolder">${mohr0.svg}</div>
+    <div class="stat-grid">
+      <span class="k">x position</span><span class="v">${fmt(xBeam, 2)}</span>
+      <span class="k">\u03c3 (normal)</span><span class="v">${fmt(sigma, 3)}</span>
+      <span class="k">\u03c4 (shear)</span><span class="v">${fmt(tau, 3)}</span>
+      <span class="k">\u03c3\u2081 (max principal)</span><span class="v">${fmt(mohr0.s1, 3)}</span>
+      <span class="k">\u03c3\u2082 (min principal)</span><span class="v">${fmt(mohr0.s2, 3)}</span>
+      <span class="k">\u03c4 max</span><span class="v">${fmt(mohr0.tauMax, 3)}</span>
+      <span class="k">\u03b8p (to principal plane)</span><span class="v">${fmt(mohr0.thetaP, 1)}\u00b0</span>
+      <span class="k">von Mises \u03c3\u1d65\u2098</span><span class="v">${fmt(vm, 3)}</span>
+    </div>
+    <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
+      <p class="field-label" style="margin-bottom:4px;">ROTATE THE ELEMENT</p>
+      <p class="hint-text" style="margin:0 0 8px;">Same physical point, viewed at a different cut angle \u03b8. Drag the slider and watch the shear arrows shrink and grow.</p>
+      <div id="elementSvgWrap"></div>
+      <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+        <input type="range" id="elementThetaSlider" min="0" max="180" step="1" value="0" style="flex:1;" />
+        <span id="thetaValue" style="font-family:'JetBrains Mono',monospace; font-size:12px; width:38px; text-align:right;">0\u00b0</span>
+      </div>
+      <button class="ghost-btn" id="snapPrincipalBtn" style="margin-top:8px; width:100%;">Snap to principal angle</button>
+      <div id="elementReadout" style="margin-top:10px;"></div>
+    </div>
+    <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
+      <p class="field-label" style="margin-bottom:4px;">WHY IT VANISHES \u2014 AND WHAT \u03c3\u2081, \u03c3\u2082 ACTUALLY ARE</p>
+      <p class="hint-text" style="margin:0 0 8px;">
+        This plots \u03c3x\u2032 (red) and \u03c4x\u2032y\u2032 (blue) as \u03b8 sweeps the <em>whole</em> 0\u2013180\u00b0 range \u2014 every cutting angle you could ever choose at this point.
+        <b>A principal stress is just the peak or trough of the red curve</b> \u2014 the biggest and smallest normal stress this point can ever show you, at any viewing angle. There's no separate definition beyond that.
+        Watch where the gold dashed lines fall: the blue curve crosses exactly zero there, precisely where the red curve is flat (a max or min). That's because <span style="font-family:'JetBrains Mono',monospace;">d\u03c3x\u2032/d\u03b8 = 2\u03c4x\u2032y\u2032</span> at every angle \u2014 shear IS the slope of the normal-stress curve. A flat spot (zero slope) and zero shear are the same event by definition, not a coincidence the beam happens to have.
+      </p>
+      <div id="transformChartWrap"></div>
+    </div>`;
+
+  document.getElementById('elementThetaSlider').oninput = (e) => { state.elementTheta = Number(e.target.value); renderStressElement(); };
+  document.getElementById('snapPrincipalBtn').onclick = () => {
+    state.elementTheta = lastInspected.thetaPNorm;
+    document.getElementById('elementThetaSlider').value = state.elementTheta;
+    renderStressElement();
+  };
+  renderStressElement();
+}
+
+// ---- Stress ALONG THE LENGTH ------------------------------------------------
+function sigmaExtremeAt(xBeam) {
+  const section = currentSectionProps;
+  const M = bendingMoment(xBeam, state.support, state.loadType, state.P, BEAM.L);
+  return bendingStress(M, section.yMax, section.I);
+}
+function tauExtremeAt(xBeam) {
+  const section = currentSectionProps;
+  const T = torsionTorque(xBeam, state.support, state.T, BEAM.L);
+  return maxTorsionShearAt(section, Math.abs(T)) * Math.sign(T || 1);
+}
+function primaryStressAt(xBeam) {
+  if (state.mode === 'bending') return Math.abs(sigmaExtremeAt(xBeam));
+  if (state.mode === 'torsion') return Math.abs(tauExtremeAt(xBeam));
+  const s = sigmaExtremeAt(xBeam), t = tauExtremeAt(xBeam);
+  return Math.sqrt(s ** 2 + 3 * t ** 2);
+}
+
+const lengthChartWrap = document.getElementById('lengthChartWrap');
+const xSlider = document.getElementById('xSlider');
+const xLabelEl = document.getElementById('xLabel');
+
+function buildLengthChart() {
+  const N = 48, W = 280, H = 100, padL = 26, padR = 10, padT = 10, padB = 20;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const values = [];
+  let maxV = 1e-9;
+  for (let i = 0; i <= N; i++) {
+    const x = (i / N) * BEAM.L;
+    const v = primaryStressAt(x);
+    values.push(v);
+    if (v > maxV) maxV = v;
+  }
+  const px = (x) => padL + (x / BEAM.L) * plotW;
+  const py = (v) => padT + plotH - (v / maxV) * plotH;
+  const accent = accentHexFor(state.mode);
+
+  let path = `M ${px(0)} ${py(values[0])}`;
+  for (let i = 1; i <= N; i++) path += ` L ${px((i / N) * BEAM.L)} ${py(values[i])}`;
+  const areaPath = `${path} L ${px(BEAM.L)} ${padT + plotH} L ${px(0)} ${padT + plotH} Z`;
+
+  const markerX = px(state.inspectX);
+  const markerV = primaryStressAt(state.inspectX);
+
+  let s = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">`;
+  s += `<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="#1C2430" stroke-width="1"/>`;
+  s += `<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="#1C2430" stroke-width="1"/>`;
+  s += `<path d="${areaPath}" fill="${accent}" fill-opacity="0.15"/>`;
+  s += `<path d="${path}" fill="none" stroke="${accent}" stroke-width="1.75"/>`;
+  s += `<line x1="${markerX}" y1="${padT}" x2="${markerX}" y2="${padT + plotH}" stroke="#E8ECF2" stroke-width="1" stroke-dasharray="3 3"/>`;
+  s += `<circle cx="${markerX}" cy="${py(markerV)}" r="3.5" fill="#E8ECF2"/>`;
+  s += `<text x="${padL}" y="${H - 4}" fill="#7C8798" font-size="9">0</text>`;
+  s += `<text x="${W - padR}" y="${H - 4}" fill="#7C8798" font-size="9" text-anchor="end">L</text>`;
+  s += `<text x="${padL - 4}" y="${padT + 8}" fill="#7C8798" font-size="8" text-anchor="end">${fmt(maxV, 2)}</text>`;
+  s += `</svg>`;
+  lengthChartWrap.innerHTML = s;
+}
+
+// ---- Cross-section RASTER --------------------------------------------------
+function insideSection(section, y, z) {
+  if (section.type === 'rect') return Math.abs(y) <= section.H / 2 && Math.abs(z) <= section.D / 2;
+  if (section.type === 'circle') return y * y + z * z <= section.R * section.R;
+  const hh = section.d / 2 - section.tf;
+  if (Math.abs(y) > section.d / 2) return false;
+  if (Math.abs(y) > hh) return Math.abs(z) <= section.bf / 2;
+  return Math.abs(z) <= section.tw / 2;
+}
+
+const crossCanvas = document.getElementById('crossSectionCanvas');
+const crossCtx = crossCanvas.getContext('2d');
+let crossScalePx = 1, crossOriginPx = { x: 0, y: 0 };
+let pickedPoint = null; // { oy, oz } in model coords, for the highlight dot
+
+function drawCrossSection() {
+  const section = currentSectionProps;
+  const xBeam = state.inspectX;
+  const size = crossCanvas.width;
+  crossCtx.clearRect(0, 0, size, size);
+
+  const { H: boundH, D: boundD } = visualExtents(state.section);
+  const scale = (size * 0.78) / Math.max(boundH, boundD);
+  crossScalePx = scale;
+  crossOriginPx = { x: size / 2, y: size / 2 };
+
+  // reference maxima (same basis as the 3D heatmap) so colors match exactly
+  const maxRef = 100;
+  const maxM = Math.abs(bendingMoment(state.support === 'cantilever' ? 0 : BEAM.L / 2, state.support, state.loadType, maxRef, BEAM.L));
+  const maxSigma = Math.abs(bendingStress(maxM, section.yMax, section.I));
+  const maxTau = Math.abs(maxTorsionShearAt(section, maxRef));
+  const maxVM = Math.sqrt(maxSigma ** 2 + 3 * maxTau ** 2);
+
+  const img = crossCtx.createImageData(size, size);
+  for (let px = 0; px < size; px++) {
+    for (let py = 0; py < size; py++) {
+      const y = (crossOriginPx.y - py) / scale; // screen up = +Y
+      const z = (px - crossOriginPx.x) / scale;
+      const idx = (py * size + px) * 4;
+      if (!insideSection(section, y, z)) { img.data[idx + 3] = 0; continue; }
+
+      let sigma = 0, tau = 0;
+      if (state.mode === 'bending' || state.mode === 'combined') sigma = bendingStress(bendingMoment(xBeam, state.support, state.loadType, state.P, BEAM.L), y, section.I);
+      if (state.mode === 'torsion' || state.mode === 'combined') tau = torsionShear(section, torsionTorque(xBeam, state.support, state.T, BEAM.L), y, z);
+
+      let norm;
+      if (state.mode === 'combined') norm = maxVM > 0 ? Math.min(Math.sqrt(sigma ** 2 + 3 * tau ** 2) / maxVM, 1) : 0;
+      else if (state.mode === 'bending') norm = maxSigma > 0 ? Math.min(Math.abs(sigma) / maxSigma, 1) : 0;
+      else norm = maxTau > 0 ? Math.min(Math.abs(tau) / maxTau, 1) : 0;
+
+      const c = heatColor(norm);
+      img.data[idx] = Math.round(c.r * 255); img.data[idx + 1] = Math.round(c.g * 255); img.data[idx + 2] = Math.round(c.b * 255); img.data[idx + 3] = 255;
+    }
+  }
+  crossCtx.putImageData(img, 0, 0);
+
+  // outline
+  crossCtx.strokeStyle = '#0A0E14'; crossCtx.lineWidth = 1.5;
+  crossCtx.beginPath();
+  const steps = 64;
+  let started = false;
+  // trace outline by marching the boundary (cheap approach: redraw shape outline analytically)
+  crossCtx.strokeStyle = 'rgba(232,236,242,0.4)';
+  if (section.type === 'rect') {
+    crossCtx.strokeRect(crossOriginPx.x - section.D / 2 * scale, crossOriginPx.y - section.H / 2 * scale, section.D * scale, section.H * scale);
+  } else if (section.type === 'circle') {
+    crossCtx.beginPath(); crossCtx.arc(crossOriginPx.x, crossOriginPx.y, section.R * scale, 0, Math.PI * 2); crossCtx.stroke();
+  }
+  // neutral axis reference line
+  crossCtx.strokeStyle = 'rgba(232,236,242,0.25)'; crossCtx.setLineDash([3, 3]);
+  crossCtx.beginPath(); crossCtx.moveTo(0, crossOriginPx.y); crossCtx.lineTo(size, crossOriginPx.y); crossCtx.stroke();
+  crossCtx.setLineDash([]);
+
+  if (pickedPoint) {
+    const px = crossOriginPx.x + pickedPoint.oz * scale;
+    const py = crossOriginPx.y - pickedPoint.oy * scale;
+    crossCtx.beginPath(); crossCtx.arc(px, py, 4, 0, Math.PI * 2);
+    crossCtx.fillStyle = '#ffffff'; crossCtx.fill();
+    crossCtx.strokeStyle = '#0A0E14'; crossCtx.lineWidth = 1.5; crossCtx.stroke();
+  }
+
+  xLabelEl.textContent = fmt(xBeam, 2);
+}
+
+crossCanvas.addEventListener('click', (e) => {
+  const rect = crossCanvas.getBoundingClientRect();
+  const scaleFactor = crossCanvas.width / rect.width;
+  const px = (e.clientX - rect.left) * scaleFactor;
+  const py = (e.clientY - rect.top) * scaleFactor;
+  const oy = (crossOriginPx.y - py) / crossScalePx;
+  const oz = (px - crossOriginPx.x) / crossScalePx;
+  if (!insideSection(currentSectionProps, oy, oz)) return;
+  pickedPoint = { oy, oz };
+  const ox = state.inspectX - BEAM.L / 2;
+  showInspection(ox, oy, oz);
+  const dp = deformedPosition(ox, oy, oz);
+  pickMarker.position.set(dp.x, dp.y, dp.z);
+  pickMarker.visible = true;
+  drawCrossSection();
+});
+
+xSlider.addEventListener('input', (e) => {
+  state.inspectX = (Number(e.target.value) / 100) * BEAM.L;
+  pickedPoint = null;
+  drawCrossSection();
+  buildLengthChart();
+});
+
+function update() {
+  applyMaterialMap();
+  deform();
+  rebuildLoadIndicator();
+  refreshTopControls();
+  refreshReadout();
+  buildFBD();
+  buildLengthChart();
+  drawCrossSection();
+}
+
+// ---- control wiring ---------------------------------------------------------
+document.getElementById('modeSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; state.mode = b.dataset.value; update(); });
+document.getElementById('supportSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  state.support = b.dataset.value; rebuildSupports();
+  state.inspectX = defaultInspectX(); xSlider.value = (state.inspectX / BEAM.L) * 100; pickedPoint = null;
+  update();
+});
+document.getElementById('loadTypeSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; state.loadType = b.dataset.value; update(); });
+document.getElementById('sectionSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  state.section = b.dataset.value;
+  rebuildBeamGeometry(); rebuildSupports(); pickMarker.visible = false; pickedPoint = null;
+  mohrWrap.innerHTML = `<p class="hint-text">Click a point on the beam (3D) or on the cross-section above to see its local stress state and Mohr's circle.</p>`;
+  update();
+});
+document.getElementById('heatmapLabel').addEventListener('click', () => { state.heatmap = !state.heatmap; update(); });
+document.getElementById('pSlider').addEventListener('input', (e) => { state.P = Number(e.target.value); update(); });
+document.getElementById('tSlider').addEventListener('input', (e) => { state.T = Number(e.target.value); update(); });
+document.getElementById('scaleSlider').addEventListener('input', (e) => { state.scale = Number(e.target.value); update(); });
+
+document.getElementById('analysisToggle').addEventListener('click', () => document.getElementById('analysisPanel').classList.add('open'));
+document.getElementById('analysisClose').addEventListener('click', () => document.getElementById('analysisPanel').classList.remove('open'));
+
+// =========================================================================
+// Camera orbit + click-to-inspect raycasting
+// =========================================================================
+let isDragging = false, lastX = 0, lastY = 0, downX = 0, downY = 0, dragMoved = false;
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+
+function tryPick(clientX, clientY) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObject(beamMesh, false);
+  if (!hits.length) return;
+  const hit = hits[0];
+  const vIdx = hit.face.a;
+  const ox = ORIGINAL[vIdx * 3], oy = ORIGINAL[vIdx * 3 + 1], oz = ORIGINAL[vIdx * 3 + 2];
+  pickMarker.position.copy(hit.point);
+  pickMarker.visible = true;
+  showInspection(ox, oy, oz);
+  // keep the length-chart probe and cross-section slice in sync with the 3D pick
+  state.inspectX = ox + BEAM.L / 2;
+  xSlider.value = (state.inspectX / BEAM.L) * 100;
+  pickedPoint = { oy, oz };
+  buildLengthChart();
+  drawCrossSection();
+  document.getElementById('analysisPanel').classList.add('open');
+}
+
+renderer.domElement.addEventListener('mousedown', (e) => { isDragging = true; dragMoved = false; lastX = downX = e.clientX; lastY = downY = e.clientY; });
+window.addEventListener('mousemove', (e) => {
+  if (!isDragging) return;
+  if (Math.abs(e.clientX - downX) > 4 || Math.abs(e.clientY - downY) > 4) dragMoved = true;
+  camTheta -= (e.clientX - lastX) * 0.006; camPhi -= (e.clientY - lastY) * 0.006;
+  lastX = e.clientX; lastY = e.clientY; updateCamera();
+});
+window.addEventListener('mouseup', (e) => { isDragging = false; if (!dragMoved) tryPick(e.clientX, e.clientY); });
+
+let touchMode = null, lastTouchDist = 0, touchStartX = 0, touchStartY = 0, touchMoved = false;
+renderer.domElement.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 1) { touchMode = 'rotate'; touchMoved = false; lastX = touchStartX = e.touches[0].clientX; lastY = touchStartY = e.touches[0].clientY; }
+  else if (e.touches.length === 2) { touchMode = 'pinch'; const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY; lastTouchDist = Math.sqrt(dx * dx + dy * dy); }
+}, { passive: true });
+renderer.domElement.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (touchMode === 'rotate' && e.touches.length === 1) {
+    if (Math.abs(e.touches[0].clientX - touchStartX) > 4 || Math.abs(e.touches[0].clientY - touchStartY) > 4) touchMoved = true;
+    camTheta -= (e.touches[0].clientX - lastX) * 0.006; camPhi -= (e.touches[0].clientY - lastY) * 0.006;
+    lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; updateCamera();
+  } else if (touchMode === 'pinch' && e.touches.length === 2) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    camRadius *= 1 + (lastTouchDist - dist) * 0.004; lastTouchDist = dist; updateCamera();
+  }
+}, { passive: false });
+renderer.domElement.addEventListener('touchend', (e) => {
+  if (touchMode === 'rotate' && !touchMoved && e.changedTouches.length) tryPick(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+  touchMode = null;
+});
+renderer.domElement.addEventListener('wheel', (e) => { e.preventDefault(); camRadius *= 1 + e.deltaY * 0.0012; updateCamera(); }, { passive: false });
+
+// =========================================================================
+// Resize + render loop
+// =========================================================================
+function onResize() { const w = window.innerWidth, h = window.innerHeight; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); }
+window.addEventListener('resize', onResize); onResize();
+
+function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); renderGizmo(); }
+
+rebuildBeamGeometry();
+rebuildSupports();
+update();
+animate();
+</script>
+</body>
+</html>
