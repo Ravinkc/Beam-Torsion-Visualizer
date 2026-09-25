@@ -6,7 +6,7 @@ curved arrow on paper, but they rotate a cross-section about completely
 different axes. This lets you watch the difference happen in real time instead
 of squinting at a 2D sketch.
 
-**[Live demo →](#)** *(replace with your GitHub Pages URL once it's live — see below)*
+**[Live demo →]  https://ravinkc.github.io/Beam-Torsion-Visualizer/** *(replace with your GitHub Pages URL once it's live — see below)*
 
 ---
 
