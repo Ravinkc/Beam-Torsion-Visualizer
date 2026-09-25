@@ -47,16 +47,6 @@ open index.html   # or: python3 -m http.server, then visit localhost:8000
 It loads Three.js from a CDN (`cdnjs.cloudflare.com`), so you need an internet
 connection the first time, but nothing else to install.
 
-## Deploy it on GitHub Pages (2 minutes)
-
-1. Push this repo to GitHub (`index.html` at the root, like it already is here).
-2. On the repo page, go to **Settings → Pages**.
-3. Under **Build and deployment → Source**, choose **Deploy from a branch**.
-4. Pick your default branch (usually `main`) and folder `/ (root)`, then **Save**.
-5. GitHub gives you a URL shaped like `https://<your-username>.github.io/<your-repo>/`
-   — that's your live link. It can take a minute or two to go live the first time.
-
-Update the "Live demo" link at the top of this README once you have it.
 
 ## Tech
 
@@ -66,9 +56,7 @@ one file so it's trivial to host anywhere that serves static files.
 
 ## Credits
 
-Built by [Surath Pande](https://github.com/) and Rojseen Shrestha, out of an idle-time
+Built by Ravin KC and Rojseen Shrestha, out of an idle-time
 conversation about how confusing bending vs. torsion is the first time you meet it.
 
-## License
 
-MIT — see [LICENSE](LICENSE). Use it, fork it, teach with it.
